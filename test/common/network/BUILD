@@ -91,6 +91,7 @@ envoy_cc_test(
         "//test/test_common:environment_lib",
         "//test/test_common:network_utility_lib",
         "//test/test_common:simulated_time_system_lib",
+        "//test/test_common:test_runtime_lib",
         "//test/test_common:test_time_lib",
         "//test/test_common:threadsafe_singleton_injector_lib",
         "@envoy_api//envoy/config/core/v3:pkg_cc_proto",
@@ -402,6 +403,20 @@ envoy_cc_test(
         "//source/common/common:utility_lib",
         "//source/common/network:address_lib",
         "//test/mocks/api:api_mocks",
+        "//test/test_common:threadsafe_singleton_injector_lib",
+        "//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "win32_socket_handle_impl_test",
+    srcs = ["win32_socket_handle_impl_test.cc"],
+    deps = [
+        "//source/common/buffer:buffer_lib",
+        "//source/common/common:utility_lib",
+        "//source/common/network:address_lib",
+        "//test/mocks/api:api_mocks",
+        "//test/mocks/event:event_mocks",
         "//test/test_common:threadsafe_singleton_injector_lib",
     ],
 )

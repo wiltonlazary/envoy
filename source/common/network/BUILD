@@ -15,7 +15,6 @@ envoy_cc_library(
     deps = [
         ":socket_interface_lib",
         "//envoy/network:address_interface",
-        "//source/common/api:os_sys_calls_lib",
         "//source/common/common:assert_lib",
         "//source/common/common:safe_memcpy_lib",
         "//source/common/common:statusor_lib",
@@ -64,6 +63,7 @@ envoy_cc_library(
     hdrs = ["connection_impl_base.h"],
     deps = [
         ":filter_manager_lib",
+        ":listen_socket_lib",
         "//envoy/common:scope_tracker_interface",
         "//envoy/event:dispatcher_interface",
         "//source/common/common:assert_lib",
@@ -184,10 +184,12 @@ envoy_cc_library(
     srcs = [
         "io_socket_handle_impl.cc",
         "socket_interface_impl.cc",
+        "win32_socket_handle_impl.cc",
     ],
     hdrs = [
         "io_socket_handle_impl.h",
         "socket_interface_impl.h",
+        "win32_socket_handle_impl.h",
     ],
     deps = [
         ":address_lib",
@@ -197,6 +199,7 @@ envoy_cc_library(
         "//envoy/event:dispatcher_interface",
         "//envoy/network:io_handle_interface",
         "//source/common/api:os_sys_calls_lib",
+        "//source/common/buffer:buffer_lib",
         "//source/common/event:dispatcher_includes",
         "@envoy_api//envoy/extensions/network/socket_interface/v3:pkg_cc_proto",
     ],

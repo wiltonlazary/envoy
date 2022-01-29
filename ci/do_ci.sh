@@ -449,7 +449,7 @@ elif [[ "$CI_TARGET" == "deps" ]]; then
 
   echo "verifying dependencies..."
   # Validate dependency relationships between core/extensions and external deps.
-  "${ENVOY_SRCDIR}"/tools/dependency/validate.py
+  time bazel run "${BAZEL_BUILD_OPTIONS[@]}" //tools/dependency:validate
 
   # Validate repository metadata.
   echo "check repositories..."
@@ -462,7 +462,6 @@ elif [[ "$CI_TARGET" == "deps" ]]; then
   exit 0
 elif [[ "$CI_TARGET" == "cve_scan" ]]; then
   echo "scanning for CVEs in dependencies..."
-  bazel run "${BAZEL_BUILD_OPTIONS[@]}" //tools/dependency:cve_scan_test
   bazel run "${BAZEL_BUILD_OPTIONS[@]}" //tools/dependency:cve_scan
   exit 0
 elif [[ "$CI_TARGET" == "tooling" ]]; then
@@ -480,12 +479,7 @@ elif [[ "$CI_TARGET" == "tooling" ]]; then
   "${ENVOY_SRCDIR}"/tools/code_format/check_format_test_helper.sh --log=WARN
 
   echo "dependency validate_test..."
-  "${ENVOY_SRCDIR}"/tools/dependency/validate_test.py
-
-  # Validate the CVE scanner works. We do it here as well as in cve_scan, since this blocks
-  # presubmits, but cve_scan only runs async.
-  echo "cve_scan_test..."
-  bazel run "${BAZEL_BUILD_OPTIONS[@]}" //tools/dependency:cve_scan_test
+  bazel run "${BAZEL_BUILD_OPTIONS[@]}" //tools/dependency:validate_test
 
   exit 0
 elif [[ "$CI_TARGET" == "verify_examples" ]]; then

@@ -22,10 +22,10 @@ EnvoyQuicServerSession::EnvoyQuicServerSession(
     : quic::QuicServerSessionBase(config, supported_versions, connection.get(), visitor, helper,
                                   crypto_config, compressed_certs_cache),
       QuicFilterManagerConnectionImpl(*connection, connection->connection_id(), dispatcher,
-                                      send_buffer_limit),
+                                      send_buffer_limit,
+                                      std::make_shared<QuicSslConnectionInfo>(*this)),
       quic_connection_(std::move(connection)), quic_stat_names_(quic_stat_names),
       listener_scope_(listener_scope), crypto_server_stream_factory_(crypto_server_stream_factory) {
-  quic_ssl_info_ = std::make_shared<QuicSslConnectionInfo>(*this);
 }
 
 EnvoyQuicServerSession::~EnvoyQuicServerSession() {
@@ -72,16 +72,19 @@ quic::QuicSpdyStream* EnvoyQuicServerSession::CreateIncomingStream(quic::QuicStr
 quic::QuicSpdyStream*
 EnvoyQuicServerSession::CreateIncomingStream(quic::PendingStream* /*pending*/) {
   // Only client side server push stream should trigger this call.
-  NOT_REACHED_GCOVR_EXCL_LINE;
+  IS_ENVOY_BUG("Unexpected function call");
+  return nullptr;
 }
 
 quic::QuicSpdyStream* EnvoyQuicServerSession::CreateOutgoingBidirectionalStream() {
   // Disallow server initiated stream.
-  NOT_REACHED_GCOVR_EXCL_LINE;
+  IS_ENVOY_BUG("Unexpected function call");
+  return nullptr;
 }
 
 quic::QuicSpdyStream* EnvoyQuicServerSession::CreateOutgoingUnidirectionalStream() {
-  NOT_REACHED_GCOVR_EXCL_LINE;
+  IS_ENVOY_BUG("Unexpected function call");
+  return nullptr;
 }
 
 void EnvoyQuicServerSession::setUpRequestDecoder(EnvoyQuicServerStream& stream) {
@@ -168,6 +171,7 @@ void EnvoyQuicServerSession::setHttp3Options(
           quic::QuicTime::Delta::FromMilliseconds(initial_interval));
     }
   }
+  set_allow_extended_connect(http3_options_->allow_extended_connect());
 }
 
 void EnvoyQuicServerSession::storeConnectionMapPosition(FilterChainToConnectionMap& connection_map,

@@ -29,7 +29,7 @@ std::vector<Secret::TlsCertificateConfigProviderSharedPtr> getTlsCertificateConf
   if (!config.tls_certificates().empty()) {
     for (const auto& tls_certificate : config.tls_certificates()) {
       if (!tls_certificate.has_private_key_provider() && !tls_certificate.has_certificate_chain() &&
-          !tls_certificate.has_private_key()) {
+          !tls_certificate.has_private_key() && !tls_certificate.has_pkcs12()) {
         continue;
       }
       providers.push_back(
@@ -354,7 +354,7 @@ ClientContextConfigImpl::ClientContextConfigImpl(
   }
 }
 
-const unsigned ServerContextConfigImpl::DEFAULT_MIN_VERSION = TLS1_VERSION;
+const unsigned ServerContextConfigImpl::DEFAULT_MIN_VERSION = TLS1_2_VERSION;
 const unsigned ServerContextConfigImpl::DEFAULT_MAX_VERSION = TLS1_3_VERSION;
 
 const std::string ServerContextConfigImpl::DEFAULT_CIPHER_SUITES =

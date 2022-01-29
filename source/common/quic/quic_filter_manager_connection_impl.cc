@@ -10,11 +10,12 @@ namespace Quic {
 
 QuicFilterManagerConnectionImpl::QuicFilterManagerConnectionImpl(
     QuicNetworkConnection& connection, const quic::QuicConnectionId& connection_id,
-    Event::Dispatcher& dispatcher, uint32_t send_buffer_limit)
+    Event::Dispatcher& dispatcher, uint32_t send_buffer_limit,
+    std::shared_ptr<QuicSslConnectionInfo>&& info)
     // Using this for purpose other than logging is not safe. Because QUIC connection id can be
     // 18 bytes, so there might be collision when it's hashed to 8 bytes.
     : Network::ConnectionImplBase(dispatcher, /*id=*/connection_id.Hash()),
-      network_connection_(&connection),
+      network_connection_(&connection), quic_ssl_info_(std::move(info)),
       filter_manager_(
           std::make_unique<Network::FilterManagerImpl>(*this, *connection.connectionSocket())),
       stream_info_(dispatcher.timeSource(),
@@ -23,6 +24,8 @@ QuicFilterManagerConnectionImpl::QuicFilterManagerConnectionImpl(
           send_buffer_limit / 2, send_buffer_limit, [this]() { onSendBufferLowWatermark(); },
           [this]() { onSendBufferHighWatermark(); }, ENVOY_LOGGER()) {
   stream_info_.protocol(Http::Protocol::Http3);
+  network_connection_->connectionSocket()->connectionInfoProvider().setSslConnection(
+      Ssl::ConnectionInfoConstSharedPtr(quic_ssl_info_));
 }
 
 void QuicFilterManagerConnectionImpl::addWriteFilter(Network::WriteFilterSharedPtr filter) {
@@ -58,7 +61,7 @@ void QuicFilterManagerConnectionImpl::setBufferLimits(uint32_t /*limit*/) {
   // Currently read buffer is capped by connection level flow control. And write buffer limit is set
   // during construction. Changing the buffer limit during the life time of the connection is not
   // supported.
-  NOT_REACHED_GCOVR_EXCL_LINE;
+  IS_ENVOY_BUG("unexpected call to setBufferLimits");
 }
 
 bool QuicFilterManagerConnectionImpl::aboveHighWatermark() const {
@@ -124,7 +127,7 @@ Ssl::ConnectionInfoConstSharedPtr QuicFilterManagerConnectionImpl::ssl() const {
 
 void QuicFilterManagerConnectionImpl::rawWrite(Buffer::Instance& /*data*/, bool /*end_stream*/) {
   // Network filter should stop iteration.
-  NOT_REACHED_GCOVR_EXCL_LINE;
+  IS_ENVOY_BUG("unexpected call to rawWrite");
 }
 
 void QuicFilterManagerConnectionImpl::updateBytesBuffered(size_t old_buffered_bytes,
@@ -187,8 +190,8 @@ void QuicFilterManagerConnectionImpl::onConnectionCloseEvent(
     codec_stats_->quic_version_rfc_v1_.inc();
     return;
   default:
-    ENVOY_BUG(false, fmt::format("Unexpected QUIC version {}",
-                                 quic::QuicVersionToString(version.transport_version)));
+    IS_ENVOY_BUG(fmt::format("Unexpected QUIC version {}",
+                             quic::QuicVersionToString(version.transport_version)));
   }
 }
 

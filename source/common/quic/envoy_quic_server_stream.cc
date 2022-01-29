@@ -35,12 +35,10 @@ EnvoyQuicServerStream::EnvoyQuicServerStream(
       headers_with_underscores_action_(headers_with_underscores_action) {
   ASSERT(static_cast<uint32_t>(GetReceiveWindow().value()) > 8 * 1024,
          "Send buffer limit should be larger than 8KB.");
-  // TODO(alyssawilk, danzh) if http3_options_.allow_extended_connect() is true,
-  // send the correct SETTINGS.
 }
 
-void EnvoyQuicServerStream::encode100ContinueHeaders(const Http::ResponseHeaderMap& headers) {
-  ASSERT(headers.Status()->value() == "100");
+void EnvoyQuicServerStream::encode1xxHeaders(const Http::ResponseHeaderMap& headers) {
+  ASSERT(Http::HeaderUtility::isSpecial1xx(headers));
   encodeHeaders(headers, false);
 }
 
@@ -160,7 +158,7 @@ void EnvoyQuicServerStream::OnInitialHeadersComplete(bool fin, size_t frame_len,
   }
   if (Http::HeaderUtility::requestHeadersValid(*headers) != absl::nullopt ||
       Http::HeaderUtility::checkRequiredRequestHeaders(*headers) != Http::okStatus() ||
-      (headers->Protocol() && !http3_options_.allow_extended_connect())) {
+      (headers->Protocol() && !spdy_session()->allow_extended_connect())) {
     details_ = Http3ResponseCodeDetailValues::invalid_http_header;
     onStreamError(absl::nullopt);
     return;

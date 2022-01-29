@@ -344,7 +344,7 @@ protected:
 
   bool enableHalfClose() { return upstream_config_.enable_half_close_; }
 
-  const FakeUpstreamConfig& upstreamConfig() { return upstream_config_; }
+  FakeUpstreamConfig& upstreamConfig() { return upstream_config_; }
   void setMaxRequestHeadersKb(uint32_t value) { upstream_config_.max_request_headers_kb_ = value; }
   void setMaxRequestHeadersCount(uint32_t value) {
     upstream_config_.max_request_headers_count_ = value;
@@ -367,8 +367,6 @@ protected:
   }
 
   std::unique_ptr<Stats::Scope> upstream_stats_store_;
-
-  Thread::TestThread test_thread_;
 
   // Make sure the test server will be torn down after any fake client.
   // The test server owns the runtime, which is often accessed by client and

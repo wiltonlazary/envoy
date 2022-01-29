@@ -9,6 +9,8 @@
 #include "test/integration/http_integration.h"
 #include "test/integration/ssl_utility.h"
 
+using testing::HasSubstr;
+
 namespace Envoy {
 namespace {
 
@@ -43,6 +45,10 @@ typed_config:
                                            max_hosts, max_pending_requests, filename);
     config_helper_.prependFilter(filter);
 
+    config_helper_.prependFilter(fmt::format(R"EOF(
+name: stream-info-to-headers-filter
+typed_config:
+  "@type": type.googleapis.com/google.protobuf.Empty)EOF"));
     config_helper_.addConfigModifier([this](envoy::config::bootstrap::v3::Bootstrap& bootstrap) {
       // Switch predefined cluster_0 to CDS filesystem sourcing.
       bootstrap.mutable_dynamic_resources()->mutable_cds_config()->set_resource_api_version(
@@ -174,17 +180,24 @@ TEST_P(ProxyFilterIntegrationTest, RequestWithBody) {
   checkSimpleRequestSuccess(1024, 1024, response.get());
   EXPECT_EQ(1, test_server_->counter("dns_cache.foo.dns_query_attempt")->value());
   EXPECT_EQ(1, test_server_->counter("dns_cache.foo.host_added")->value());
+  // Make sure dns timings are tracked for cache-misses.
+  ASSERT_FALSE(response->headers().get(Http::LowerCaseString("dns_start")).empty());
+  ASSERT_FALSE(response->headers().get(Http::LowerCaseString("dns_end")).empty());
 
   // Now send another request. This should hit the DNS cache.
   response = sendRequestAndWaitForResponse(request_headers, 512, default_response_headers_, 512);
   checkSimpleRequestSuccess(512, 512, response.get());
   EXPECT_EQ(1, test_server_->counter("dns_cache.foo.dns_query_attempt")->value());
   EXPECT_EQ(1, test_server_->counter("dns_cache.foo.host_added")->value());
+  // Make sure dns timings are tracked for cache-hits.
+  ASSERT_FALSE(response->headers().get(Http::LowerCaseString("dns_start")).empty());
+  ASSERT_FALSE(response->headers().get(Http::LowerCaseString("dns_end")).empty());
 }
 
 // Currently if the first DNS resolution fails, the filter will continue with
 // a null address. Make sure this mode fails gracefully.
 TEST_P(ProxyFilterIntegrationTest, RequestWithUnknownDomain) {
+  useAccessLog("%RESPONSE_CODE_DETAILS%");
   initializeWithArgs();
   codec_client_ = makeHttpConnection(lookupPort("http"));
   const Http::TestRequestHeaderMapImpl request_headers{{":method", "GET"},
@@ -195,6 +208,7 @@ TEST_P(ProxyFilterIntegrationTest, RequestWithUnknownDomain) {
   auto response = codec_client_->makeHeaderOnlyRequest(default_request_headers_);
   ASSERT_TRUE(response->waitForEndStream());
   EXPECT_EQ("503", response->headers().getStatusValue());
+  EXPECT_THAT(waitForAccessLog(access_log_name_), HasSubstr("dns_resolution_failure"));
 }
 
 // Verify that after we populate the cache and reload the cluster we reattach to the cache with
@@ -429,7 +443,11 @@ TEST_P(ProxyFilterIntegrationTest, UseCacheFileAndTestHappyEyeballs) {
                                     "true");
   use_cache_file_ = true;
   // Prepend a bad address
-  cache_file_value_contents_ = "99.99.99.99:1|1000000|0\n";
+  if (GetParam() == Network::Address::IpVersion::v4) {
+    cache_file_value_contents_ = "99.99.99.99:1|1000000|0\n";
+  } else {
+    cache_file_value_contents_ = "[::99]:1|1000000|0\n";
+  }
 
   initializeWithArgs();
   codec_client_ = makeHttpConnection(lookupPort("http"));
