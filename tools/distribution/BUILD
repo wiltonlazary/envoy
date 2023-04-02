@@ -1,13 +1,10 @@
 load("//bazel:envoy_build_system.bzl", "envoy_package")
 load("//tools/base:envoy_python.bzl", "envoy_entry_point")
+load("@base_pip3//:requirements.bzl", "requirement")
 
 licenses(["notice"])  # Apache 2
 
 envoy_package()
-
-exports_files([
-    "distrotest.sh",
-])
 
 envoy_entry_point(
     name = "release",
@@ -22,4 +19,15 @@ envoy_entry_point(
 envoy_entry_point(
     name = "verify",
     pkg = "envoy.distribution.verify",
+)
+
+py_binary(
+    name = "update_dockerhub_repository",
+    srcs = ["update_dockerhub_repository.py"],
+    data = ["//distribution/dockerhub:readme.md"],
+    deps = [
+        requirement("aio.core"),
+        requirement("aio.run.runner"),
+        requirement("aiohttp"),
+    ],
 )

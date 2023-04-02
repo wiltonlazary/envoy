@@ -17,6 +17,11 @@ if [[ -n "${GCP_SERVICE_ACCOUNT_KEY:0:1}" ]]; then
   bash -c 'echo "${GCP_SERVICE_ACCOUNT_KEY}"' | base64 --decode > "${GCP_SERVICE_ACCOUNT_KEY_FILE}"
 
   export BAZEL_BUILD_EXTRA_OPTIONS+=" --google_credentials=${GCP_SERVICE_ACCOUNT_KEY_FILE}"
+
+  if [[ -n "${GOOGLE_BES_PROJECT_ID}" ]]; then
+    export BAZEL_BUILD_EXTRA_OPTIONS+=" --config=google-bes --bes_instance_name=${GOOGLE_BES_PROJECT_ID}"
+  fi
+
 fi
 
 
@@ -27,8 +32,10 @@ if [[ -n "${BAZEL_REMOTE_CACHE}" ]]; then
   if [[ -n "${BAZEL_REMOTE_INSTANCE}" ]]; then
     export BAZEL_BUILD_EXTRA_OPTIONS+=" --remote_instance_name=${BAZEL_REMOTE_INSTANCE}"
     echo "instance_name: ${BAZEL_REMOTE_INSTANCE}."
-  elif [[ -z "${ENVOY_RBE}" ]]; then
-    export BAZEL_BUILD_EXTRA_OPTIONS+=" --jobs=HOST_CPUS*.9 --remote_timeout=600"
+  fi
+
+  if [[ -z "${ENVOY_RBE}" ]]; then
+    export BAZEL_BUILD_EXTRA_OPTIONS+=" --jobs=HOST_CPUS*.99 --remote_timeout=600"
     echo "using local build cache."
   fi
 

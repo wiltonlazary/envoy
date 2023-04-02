@@ -9,16 +9,28 @@
 #include "envoy/server/configuration.h"
 #include "envoy/thread_local/thread_local.h"
 
-#include "source/server/connection_handler_impl.h"
+#include "source/common/config/utility.h"
+#include "source/server/listener_manager_factory.h"
 
 namespace Envoy {
 namespace Server {
+
+std::unique_ptr<ConnectionHandler> getHandler(Event::Dispatcher& dispatcher, uint32_t index) {
+
+  auto* factory = Config::Utility::getFactoryByName<ConnectionHandlerFactory>(
+      "envoy.connection_handler.default");
+  if (factory) {
+    return factory->createConnectionHandler(dispatcher, index);
+  }
+  ENVOY_LOG_MISC(debug, "Unable to find envoy.connection_handler.default factory");
+  return nullptr;
+}
 
 WorkerPtr ProdWorkerFactory::createWorker(uint32_t index, OverloadManager& overload_manager,
                                           const std::string& worker_name) {
   Event::DispatcherPtr dispatcher(
       api_.allocateDispatcher(worker_name, overload_manager.scaledTimerFactory()));
-  auto conn_handler = std::make_unique<ConnectionHandlerImpl>(*dispatcher, index);
+  auto conn_handler = getHandler(*dispatcher, index);
   return std::make_unique<WorkerImpl>(tls_, hooks_, std::move(dispatcher), std::move(conn_handler),
                                       overload_manager, api_, stat_names_);
 }
@@ -43,9 +55,10 @@ WorkerImpl::WorkerImpl(ThreadLocal::Instance& tls, ListenerHooks& hooks,
 }
 
 void WorkerImpl::addListener(absl::optional<uint64_t> overridden_listener,
-                             Network::ListenerConfig& listener, AddListenerCompletion completion) {
-  dispatcher_->post([this, overridden_listener, &listener, completion]() -> void {
-    handler_->addListener(overridden_listener, listener);
+                             Network::ListenerConfig& listener, AddListenerCompletion completion,
+                             Runtime::Loader& runtime) {
+  dispatcher_->post([this, overridden_listener, &listener, &runtime, completion]() -> void {
+    handler_->addListener(overridden_listener, listener, runtime);
     hooks_.onWorkerListenerAdded();
     completion();
   });

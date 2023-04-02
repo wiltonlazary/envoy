@@ -18,6 +18,8 @@
 #include "test/mocks/server/options.h"
 #include "test/mocks/thread_local/mocks.h"
 #include "test/test_common/registry.h"
+#include "test/test_common/simulated_time_system.h"
+#include "test/test_common/test_runtime.h"
 #include "test/test_common/utility.h"
 
 #include "gmock/gmock.h"
@@ -126,7 +128,7 @@ private:
 template <class ConfigType>
 class FakeResourceMonitorFactory : public Server::Configuration::ResourceMonitorFactory {
 public:
-  FakeResourceMonitorFactory(const std::string& name) : monitor_(nullptr), name_(name) {}
+  FakeResourceMonitorFactory(const std::string& name) : name_(name) {}
 
   Server::ResourceMonitorPtr
   createResourceMonitor(const Protobuf::Message&,
@@ -142,7 +144,7 @@ public:
 
   std::string name() const override { return name_; }
 
-  FakeResourceMonitor* monitor_; // not owned
+  FakeResourceMonitor* monitor_{nullptr}; // not owned
   const std::string name_;
 };
 
@@ -150,7 +152,7 @@ template <class ConfigType>
 class FakeProactiveResourceMonitorFactory
     : public Server::Configuration::ProactiveResourceMonitorFactory {
 public:
-  FakeProactiveResourceMonitorFactory(const std::string& name) : monitor_(nullptr), name_(name) {}
+  FakeProactiveResourceMonitorFactory(const std::string& name) : name_(name) {}
 
   Server::ProactiveResourceMonitorPtr
   createProactiveResourceMonitor(const Protobuf::Message&,
@@ -166,7 +168,7 @@ public:
 
   std::string name() const override { return name_; }
 
-  FakeProactiveResourceMonitor* monitor_; // not owned
+  FakeProactiveResourceMonitor* monitor_{nullptr}; // not owned
   const std::string name_;
 };
 
@@ -206,7 +208,10 @@ protected:
         factory5_("envoy.resource_monitors.global_downstream_max_connections"),
         register_factory1_(factory1_), register_factory2_(factory2_), register_factory3_(factory3_),
         register_factory4_(factory4_), register_factory5_(factory5_),
-        api_(Api::createApiForTest(stats_)) {}
+        api_(Api::createApiForTest(stats_)) {
+    scoped_runtime_.mergeValues(
+        {{"envoy.reloadable_features.no_extension_lookup_by_name", "false"}});
+  }
 
   void setDispatcherExpectation() {
     timer_ = new NiceMock<Event::MockTimer>();
@@ -223,15 +228,15 @@ protected:
   }
 
   std::unique_ptr<TestOverloadManager> createOverloadManager(const std::string& config) {
-    return std::make_unique<TestOverloadManager>(dispatcher_, stats_, thread_local_,
+    return std::make_unique<TestOverloadManager>(dispatcher_, *stats_.rootScope(), thread_local_,
                                                  parseConfig(config), validation_visitor_, *api_,
                                                  options_);
   }
 
   FakeResourceMonitorFactory<Envoy::ProtobufWkt::Struct> factory1_;
   FakeResourceMonitorFactory<Envoy::ProtobufWkt::Timestamp> factory2_;
-  FakeResourceMonitorFactory<Envoy::ProtobufWkt::Timestamp> factory3_;
-  FakeResourceMonitorFactory<Envoy::ProtobufWkt::Timestamp> factory4_;
+  FakeResourceMonitorFactory<Envoy::ProtobufWkt::Duration> factory3_;
+  FakeResourceMonitorFactory<Envoy::ProtobufWkt::StringValue> factory4_;
   FakeProactiveResourceMonitorFactory<Envoy::ProtobufWkt::Timestamp> factory5_;
   Registry::InjectFactory<Configuration::ResourceMonitorFactory> register_factory1_;
   Registry::InjectFactory<Configuration::ResourceMonitorFactory> register_factory2_;
@@ -246,6 +251,7 @@ protected:
   NiceMock<ProtobufMessage::MockValidationVisitor> validation_visitor_;
   Api::ApiPtr api_;
   Server::MockOptions options_;
+  TestScopedRuntime scoped_runtime_;
 };
 
 constexpr char kRegularStateConfig[] = R"YAML(
@@ -799,6 +805,17 @@ TEST_F(OverloadManagerImplTest, Shutdown) {
   manager->stop();
 }
 
+TEST_F(OverloadManagerImplTest, MissingConfigTriggerType) {
+  constexpr char missingTriggerTypeConfig[] = R"YAML(
+  actions:
+    - name: envoy.overload_actions.dummy_action
+      triggers:
+        - name: envoy.resource_monitors.fake_resource1
+)YAML";
+  EXPECT_THROW_WITH_REGEX(createOverloadManager(missingTriggerTypeConfig), EnvoyException,
+                          "action not set for trigger.*");
+}
+
 TEST_F(OverloadManagerImplTest, ProactiveResourceAllocateAndDeallocateResourceTest) {
   setDispatcherExpectation();
   auto manager(createOverloadManager(proactiveResourceConfig));
@@ -825,6 +842,36 @@ TEST_F(OverloadManagerImplTest, ProactiveResourceAllocateAndDeallocateResourceTe
   manager->stop();
 }
 
+class OverloadManagerSimulatedTimeTest : public OverloadManagerImplTest,
+                                         public Envoy::Event::TestUsingSimulatedTime {};
+
+TEST_F(OverloadManagerSimulatedTimeTest, RefreshLoopDelay) {
+  setDispatcherExpectation();
+  auto manager(createOverloadManager(kRegularStateConfig));
+  manager->start();
+
+  simTime().advanceTimeWait(Envoy::Seconds(1));
+
+  timer_cb_();
+
+  // Check the first reading
+  const std::vector<uint64_t> first_reading =
+      stats_.histogramValues("overload.refresh_interval_delay", false);
+  EXPECT_EQ(first_reading.size(), 1);
+  EXPECT_EQ(first_reading[0], 1000);
+
+  simTime().advanceTimeWait(Envoy::Seconds(2));
+
+  timer_cb_();
+
+  // Check the second reading
+  const std::vector<uint64_t> second_reading =
+      stats_.histogramValues("overload.refresh_interval_delay", false);
+  EXPECT_EQ(second_reading.size(), 2);
+  EXPECT_EQ(second_reading[1], 2000);
+
+  manager->stop();
+}
 } // namespace
 } // namespace Server
 } // namespace Envoy

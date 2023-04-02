@@ -1,11 +1,12 @@
-load("@rules_cc//cc:defs.bzl", "cc_binary")
-
 # DO NOT LOAD THIS FILE. Load envoy_build_system.bzl instead.
 # Envoy binary targets
 load(
     ":envoy_internal.bzl",
     "envoy_copts",
+    "envoy_dbg_linkopts",
+    "envoy_exported_symbols_input",
     "envoy_external_dep_path",
+    "envoy_select_exported_symbols",
     "envoy_stdlib_deps",
     "tcmalloc_external_dep",
 )
@@ -24,16 +25,20 @@ def envoy_cc_binary(
         linkopts = [],
         tags = [],
         features = []):
+    linker_inputs = envoy_exported_symbols_input()
+
     if not linkopts:
         linkopts = _envoy_linkopts()
     if stamped:
         linkopts = linkopts + _envoy_stamped_linkopts()
         deps = deps + _envoy_stamped_deps()
+    linkopts += envoy_dbg_linkopts()
     deps = deps + [envoy_external_dep_path(dep) for dep in external_deps] + envoy_stdlib_deps()
-    cc_binary(
+    native.cc_binary(
         name = name,
         srcs = srcs,
         data = data,
+        additional_linker_inputs = linker_inputs,
         copts = envoy_copts(repository),
         linkopts = linkopts,
         testonly = testonly,
@@ -46,17 +51,15 @@ def envoy_cc_binary(
         features = features,
     )
 
-# Select the given values if exporting is enabled in the current build.
-def _envoy_select_exported_symbols(xs):
-    return select({
-        "@envoy//bazel:enable_exported_symbols": xs,
-        "//conditions:default": [],
-    })
-
 # Compute the final linkopts based on various options.
 def _envoy_linkopts():
     return select({
-        "@envoy//bazel:apple": [],
+        "@envoy//bazel:apple": [
+            # https://github.com/envoyproxy/envoy/issues/24782
+            "-Wl,-framework,CoreFoundation",
+            # https://github.com/bazelbuild/bazel/pull/16414
+            "-Wl,-undefined,error",
+        ],
         "@envoy//bazel:windows_opt_build": [
             "-DEFAULTLIB:ws2_32.lib",
             "-DEFAULTLIB:iphlpapi.lib",
@@ -78,10 +81,11 @@ def _envoy_linkopts():
             "-Wl,--hash-style=gnu",
         ],
     }) + select({
+        "@envoy//bazel:apple": [],
         "@envoy//bazel:boringssl_fips": [],
         "@envoy//bazel:windows_x86_64": [],
         "//conditions:default": ["-pie"],
-    }) + _envoy_select_exported_symbols(["-Wl,-E"])
+    }) + envoy_select_exported_symbols(["-Wl,-E"])
 
 def _envoy_stamped_deps():
     return select({

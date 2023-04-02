@@ -3,9 +3,10 @@
 Access logging
 ==============
 
-The :ref:`HTTP connection manager <arch_overview_http_conn_man>` and
-:ref:`tcp proxy <arch_overview_tcp_proxy>` support extensible access logging with the following
-features:
+The :ref:`HTTP connection manager <arch_overview_http_conn_man>`, the
+:ref:`tcp proxy <arch_overview_tcp_proxy>` and the
+:ref:`thrift proxy <config_network_filters_thrift_proxy>`
+support extensible access logging with the following features:
 
 * Any number of access logs per a connection stream.
 * Customizable access log filters that allow different types of requests and responses to be written
@@ -15,6 +16,30 @@ Downstream connection access logging can be enabled using :ref:`listener access
 logs<envoy_v3_api_field_config.listener.v3.Listener.access_log>`. The listener access logs complement
 HTTP request access logging and can be enabled separately and independently from
 filter access logs.
+
+.. _arch_overview_access_log_periodic:
+
+Periodic access logs
+--------------------
+
+If access log is enabled, then by default it will be reported to the configured sinks at the end of a TCP
+stream, or HTTP request. It is possible to extend this behavior and report access logs periodically, and
+right after the TCP Proxy has successfully established a connection with the upstream, or when a new HTTP
+request has been received by the HTTP connection manager. Note: When recording a log after a new HTTP
+has been received, some information such as upstream host will not be available yet. Reporting access logs
+right after upstream connection establishment does not depend on periodic reporting, and and the other way around.
+
+TCP Proxy
+*********
+
+* Periodic access logs can be enabled using :ref:`access log flush interval <envoy_v3_api_field_extensions.filters.network.tcp_proxy.v3.TcpProxy.access_log_flush_interval>`
+* Access log after upstream connection can be enabled using :ref:`flush access log on connected <envoy_v3_api_field_extensions.filters.network.tcp_proxy.v3.TcpProxy.flush_access_log_on_connected>`
+
+HTTP Connection Manager
+***********************
+
+* Periodic access logs can be enabled using :ref:`access log flush interval <envoy_v3_api_field_extensions.filters.network.http_connection_manager.v3.HttpConnectionManager.access_log_flush_interval>`
+* Access log when a new HTTP request is received can be enabled using :ref:`flush access log on new request <envoy_v3_api_field_extensions.filters.network.http_connection_manager.v3.HttpConnectionManager.flush_access_log_on_new_request>`
 
 .. _arch_overview_access_log_filters:
 

@@ -45,8 +45,9 @@ public:
       response_timer_cb_ = timer_cb;
       return response_timer_;
     }));
-    load_stats_reporter_ = std::make_unique<LoadStatsReporter>(
-        local_info_, cm_, stats_store_, Grpc::RawAsyncClientPtr(async_client_), dispatcher_);
+    load_stats_reporter_ =
+        std::make_unique<LoadStatsReporter>(local_info_, cm_, *stats_store_.rootScope(),
+                                            Grpc::RawAsyncClientPtr(async_client_), dispatcher_);
   }
 
   void expectSendMessage(
@@ -125,8 +126,8 @@ TEST_F(LoadStatsReporterTest, ExistingClusters) {
   foo_cluster.info_->load_report_stats_.upstream_rq_dropped_.add(2);
   foo_cluster.info_->eds_service_name_ = "bar";
   NiceMock<MockClusterMockPrioritySet> bar_cluster;
-  MockClusterManager::ClusterInfoMaps cluster_info{{{"foo", foo_cluster}, {"bar", bar_cluster}},
-                                                   {}};
+  MockClusterManager::ClusterInfoMaps cluster_info{
+      {{"foo", foo_cluster}, {"bar", bar_cluster}}, {}, {}};
   ON_CALL(cm_, clusters()).WillByDefault(Return(cluster_info));
   deliverLoadStatsResponse({"foo"});
   // Initial stats report for foo on timer tick.
@@ -277,7 +278,7 @@ TEST_F(LoadStatsReporterTest, UpstreamLocalityStats) {
   addStats(host2, 10.01, 0, 20.02, 30.03);
 
   cluster.info_->eds_service_name_ = "bar";
-  MockClusterManager::ClusterInfoMaps cluster_info{{{"foo", cluster}}, {}};
+  MockClusterManager::ClusterInfoMaps cluster_info{{{"foo", cluster}}, {}, {}};
   ON_CALL(cm_, clusters()).WillByDefault(Return(cluster_info));
   deliverLoadStatsResponse({"foo"});
   // First stats report on timer tick.

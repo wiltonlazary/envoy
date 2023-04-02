@@ -464,7 +464,7 @@ std::vector<ObjectSharedPtr> Field::getObjectArray(const std::string& name,
   auto value_itr = value_.object_value_.find(name);
   if (value_itr == value_.object_value_.end() || !value_itr->second->isType(Type::Array)) {
     if (allow_empty && value_itr == value_.object_value_.end()) {
-      return std::vector<ObjectSharedPtr>();
+      return {};
     }
     throw Exception(fmt::format("key '{}' missing or not an array from lines {}-{}", name,
                                 line_number_start_, line_number_end_));
@@ -675,7 +675,7 @@ bool ObjectHandler::handleValueEvent(FieldSharedPtr ptr) {
 
 ObjectSharedPtr Factory::loadFromString(const std::string& json) {
   ObjectHandler handler;
-  auto json_container = JsonContainer(json.data(), &handler);
+  auto json_container = JsonContainer(json.c_str(), &handler);
 
   nlohmann::json::sax_parse(json_container, &handler);
 
@@ -684,6 +684,11 @@ ObjectSharedPtr Factory::loadFromString(const std::string& json) {
                                 handler.getErrorPosition(), handler.getParseError()));
   }
   return handler.getRoot();
+}
+
+std::string Factory::serialize(absl::string_view str) {
+  nlohmann::json j(str);
+  return j.dump();
 }
 
 } // namespace Nlohmann

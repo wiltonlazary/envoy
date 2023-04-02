@@ -4,6 +4,7 @@
 
 #include "envoy/common/platform.h"
 
+#include "source/common/api/os_sys_calls_impl.h"
 #include "source/common/buffer/buffer_impl.h"
 #include "source/common/common/assert.h"
 #include "source/common/common/logger.h"
@@ -119,7 +120,8 @@ public:
     uint64_t size_copied = 0;
     uint64_t num_slices_copied = 0;
     while (size_copied < length && num_slices_copied < num_slices) {
-      auto copy_length = std::min((length - size_copied), slices[num_slices_copied].len_);
+      auto copy_length =
+          std::min((length - size_copied), static_cast<uint64_t>(slices[num_slices_copied].len_));
       ::memcpy(slices[num_slices_copied].mem_, this->start(), copy_length);
       size_copied += copy_length;
       if (copy_length == slices[num_slices_copied].len_) {
@@ -212,7 +214,7 @@ public:
     return total_size_to_write;
   }
 
-  void setWatermarks(uint32_t) override {
+  void setWatermarks(uint32_t, uint32_t) override {
     // Not implemented.
     // TODO(antoniovicente) Implement and add fuzz coverage as we merge the Buffer::OwnedImpl and
     // WatermarkBuffer implementations.
@@ -315,8 +317,9 @@ uint32_t bufferAction(Context& ctxt, char insert_value, uint32_t max_alloc, Buff
       for (uint32_t i = 0; i < reservation.numSlices(); ++i) {
         ::memset(reservation.slices()[i].mem_, insert_value, reservation.slices()[i].len_);
       }
-      const uint32_t target_length =
-          std::min<uint32_t>(reservation.length(), action.reserve_commit().commit_length());
+      const uint32_t target_length = clampSize(
+          std::min<uint32_t>(reservation.length(), action.reserve_commit().commit_length()),
+          reserve_length);
       reservation.commit(target_length);
     }
     break;
@@ -389,25 +392,27 @@ uint32_t bufferAction(Context& ctxt, char insert_value, uint32_t max_alloc, Buff
     if (max_length == 0) {
       break;
     }
-    int pipe_fds[2] = {0, 0};
-    FUZZ_ASSERT(::pipe(pipe_fds) == 0);
-    Network::IoSocketHandleImpl io_handle(pipe_fds[0]);
-    FUZZ_ASSERT(::fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK) == 0);
-    FUZZ_ASSERT(::fcntl(pipe_fds[1], F_SETFL, O_NONBLOCK) == 0);
+    int fds[2] = {0, 0};
+    auto& os_sys_calls = Api::OsSysCallsSingleton::get();
+    FUZZ_ASSERT(os_sys_calls.socketpair(AF_UNIX, SOCK_STREAM, 0, fds).return_value_ == 0);
+    Network::IoSocketHandleImpl io_handle(fds[0]);
+    FUZZ_ASSERT(::fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
+    FUZZ_ASSERT(::fcntl(fds[1], F_SETFL, O_NONBLOCK) == 0);
     std::string data(max_length, insert_value);
-    const ssize_t rc = ::write(pipe_fds[1], data.data(), max_length);
+    const ssize_t rc = ::write(fds[1], data.data(), max_length);
     FUZZ_ASSERT(rc > 0);
     Api::IoCallUint64Result result = io_handle.read(target_buffer, max_length);
     FUZZ_ASSERT(result.return_value_ == static_cast<uint64_t>(rc));
-    FUZZ_ASSERT(::close(pipe_fds[1]) == 0);
+    FUZZ_ASSERT(::close(fds[1]) == 0);
     break;
   }
   case test::common::buffer::Action::kWrite: {
-    int pipe_fds[2] = {0, 0};
-    FUZZ_ASSERT(::pipe(pipe_fds) == 0);
-    Network::IoSocketHandleImpl io_handle(pipe_fds[1]);
-    FUZZ_ASSERT(::fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK) == 0);
-    FUZZ_ASSERT(::fcntl(pipe_fds[1], F_SETFL, O_NONBLOCK) == 0);
+    int fds[2] = {0, 0};
+    auto& os_sys_calls = Api::OsSysCallsSingleton::get();
+    FUZZ_ASSERT(os_sys_calls.socketpair(AF_UNIX, SOCK_STREAM, 0, fds).return_value_ == 0);
+    Network::IoSocketHandleImpl io_handle(fds[1]);
+    FUZZ_ASSERT(::fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
+    FUZZ_ASSERT(::fcntl(fds[1], F_SETFL, O_NONBLOCK) == 0);
     uint64_t return_value;
     do {
       const bool empty = target_buffer.length() == 0;
@@ -421,12 +426,11 @@ uint32_t bufferAction(Context& ctxt, char insert_value, uint32_t max_alloc, Buff
         FUZZ_ASSERT(return_value == 0);
       } else {
         auto buf = std::make_unique<char[]>(return_value);
-        FUZZ_ASSERT(static_cast<uint64_t>(::read(pipe_fds[0], buf.get(), return_value)) ==
-                    return_value);
+        FUZZ_ASSERT(static_cast<uint64_t>(::read(fds[0], buf.get(), return_value)) == return_value);
         FUZZ_ASSERT(::memcmp(buf.get(), previous_data.data(), return_value) == 0);
       }
     } while (return_value > 0);
-    FUZZ_ASSERT(::close(pipe_fds[0]) == 0);
+    FUZZ_ASSERT(::close(fds[0]) == 0);
     break;
   }
   case test::common::buffer::Action::kGetRawSlices: {

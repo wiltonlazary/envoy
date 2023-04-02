@@ -175,7 +175,7 @@ public:
   virtual bool logFormatEscaped() const PURE;
 
   /**
-   * @return const bool logger mode: whether to use Fancy Logger.
+   * @return const bool logger mode: whether to use Fine-Grain Logger.
    */
   virtual bool enableFineGrainLogging() const PURE;
 
@@ -266,6 +266,11 @@ public:
    * responsibility of the caller to handle the duplicates.
    */
   virtual const Stats::TagVector& statsTags() const PURE;
+
+  /**
+   * @return the type of listener manager to create.
+   */
+  virtual const std::string& listenerManager() const PURE;
 };
 
 } // namespace Server

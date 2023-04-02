@@ -4,6 +4,7 @@
 
 #include "envoy/extensions/filters/network/http_connection_manager/v3/http_connection_manager.pb.h"
 
+#include "source/common/common/empty_string.h"
 #include "source/common/http/default_server_string.h"
 
 #include "absl/strings/str_format.h"
@@ -98,6 +99,14 @@ absl::optional<std::chrono::nanoseconds> TimingUtility::lastUpstreamRxByteReceiv
   return duration(timing.value().get().last_upstream_rx_byte_received_, stream_info_);
 }
 
+absl::optional<std::chrono::nanoseconds> TimingUtility::upstreamHandshakeComplete() {
+  OptRef<const UpstreamTiming> timing = getUpstreamTiming(stream_info_);
+  if (!timing) {
+    return absl::nullopt;
+  }
+  return duration(timing.value().get().upstreamHandshakeComplete(), stream_info_);
+}
+
 absl::optional<std::chrono::nanoseconds> TimingUtility::firstDownstreamTxByteSent() {
   OptRef<const DownstreamTiming> timing = stream_info_.downstreamTiming();
   if (!timing) {
@@ -122,6 +131,22 @@ absl::optional<std::chrono::nanoseconds> TimingUtility::lastDownstreamRxByteRece
   return duration(timing.value().get().lastDownstreamRxByteReceived(), stream_info_);
 }
 
+absl::optional<std::chrono::nanoseconds> TimingUtility::downstreamHandshakeComplete() {
+  OptRef<const DownstreamTiming> timing = stream_info_.downstreamTiming();
+  if (!timing) {
+    return absl::nullopt;
+  }
+  return duration(timing.value().get().downstreamHandshakeComplete(), stream_info_);
+}
+
+absl::optional<std::chrono::nanoseconds> TimingUtility::lastDownstreamAckReceived() {
+  OptRef<const DownstreamTiming> timing = stream_info_.downstreamTiming();
+  if (!timing) {
+    return absl::nullopt;
+  }
+  return duration(timing.value().get().lastDownstreamAckReceived(), stream_info_);
+}
+
 const std::string&
 Utility::formatDownstreamAddressNoPort(const Network::Address::Instance& address) {
   if (address.type() == Network::Address::Type::Ip) {
@@ -138,6 +163,27 @@ Utility::formatDownstreamAddressJustPort(const Network::Address::Instance& addre
     port = std::to_string(address.ip()->port());
   }
   return port;
+}
+
+absl::optional<uint32_t>
+Utility::extractDownstreamAddressJustPort(const Network::Address::Instance& address) {
+  if (address.type() == Network::Address::Type::Ip) {
+    return address.ip()->port();
+  }
+  return {};
+}
+
+const std::string& Utility::getStreamStateString(const StreamState stream_state) {
+  switch (stream_state) {
+  case StreamState::Started:
+    return StreamStateStrings::get().StreamStarted;
+  case StreamState::InProgress:
+    return StreamStateStrings::get().StreamInProgress;
+  case StreamState::Ended:
+    return StreamStateStrings::get().StreamEnded;
+  }
+
+  return EMPTY_STRING;
 }
 
 const absl::optional<Http::Code>
@@ -358,6 +404,8 @@ ProxyStatusUtils::fromStreamInfo(const StreamInfo& stream_info) {
     return ProxyStatusError::HttpProtocolError;
   } else if (stream_info.hasResponseFlag(ResponseFlag::NoClusterFound)) {
     return ProxyStatusError::DestinationUnavailable;
+  } else if (stream_info.hasResponseFlag(ResponseFlag::DnsResolutionFailed)) {
+    return ProxyStatusError::DnsError;
   } else {
     return absl::nullopt;
   }

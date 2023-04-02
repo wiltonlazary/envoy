@@ -1,8 +1,5 @@
 #pragma once
 
-#include <map>
-#include <string>
-
 #include "source/extensions/filters/network/common/factory_base.h"
 
 #include "contrib/envoy/extensions/filters/network/sip_proxy/v3alpha/sip_proxy.pb.h"
@@ -28,12 +25,14 @@ public:
 
   bool sessionAffinity() const override;
   bool registrationAffinity() const override;
-  const std::vector<CustomizedAffinity>& customizedAffinityList() const override;
+  const envoy::extensions::filters::network::sip_proxy::v3alpha::CustomizedAffinity&
+  customizedAffinity() const override;
 
 private:
   bool session_affinity_;
   bool registration_affinity_;
-  std::vector<CustomizedAffinity> customized_affinity_list_;
+  const envoy::extensions::filters::network::sip_proxy::v3alpha::CustomizedAffinity
+      customized_affinity_;
 };
 
 /**

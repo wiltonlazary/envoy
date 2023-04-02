@@ -6,6 +6,7 @@
 
 #include "source/common/common/assert.h"
 #include "source/common/config/utility.h"
+#include "source/common/http/header_utility.h"
 #include "source/common/http/headers.h"
 #include "source/common/network/utility.h"
 #include "source/common/stream_info/utility.h"
@@ -107,6 +108,7 @@ void HttpGrpcAccessLog::emitLog(const Http::RequestHeaderMap& request_headers,
   }
   request_properties->set_request_headers_bytes(request_headers.byteSize());
   request_properties->set_request_body_bytes(stream_info.bytesReceived());
+
   if (request_headers.Method() != nullptr) {
     envoy::config::core::v3::RequestMethod method = envoy::config::core::v3::METHOD_UNSPECIFIED;
     envoy::config::core::v3::RequestMethod_Parse(std::string(request_headers.getMethodValue()),
@@ -117,11 +119,9 @@ void HttpGrpcAccessLog::emitLog(const Http::RequestHeaderMap& request_headers,
     auto* logged_headers = request_properties->mutable_request_headers();
 
     for (const auto& header : request_headers_to_log_) {
-      const auto entry = request_headers.get(header);
-      if (!entry.empty()) {
-        // TODO(https://github.com/envoyproxy/envoy/issues/13454): Potentially log all header
-        // values.
-        logged_headers->insert({header.get(), std::string(entry[0]->value().getStringView())});
+      const auto all_values = Http::HeaderUtility::getAllOfHeaderAsString(request_headers, header);
+      if (all_values.result().has_value()) {
+        logged_headers->insert({header.get(), std::string(all_values.result().value())});
       }
     }
   }
@@ -140,11 +140,9 @@ void HttpGrpcAccessLog::emitLog(const Http::RequestHeaderMap& request_headers,
     auto* logged_headers = response_properties->mutable_response_headers();
 
     for (const auto& header : response_headers_to_log_) {
-      const auto entry = response_headers.get(header);
-      if (!entry.empty()) {
-        // TODO(https://github.com/envoyproxy/envoy/issues/13454): Potentially log all header
-        // values.
-        logged_headers->insert({header.get(), std::string(entry[0]->value().getStringView())});
+      const auto all_values = Http::HeaderUtility::getAllOfHeaderAsString(response_headers, header);
+      if (all_values.result().has_value()) {
+        logged_headers->insert({header.get(), std::string(all_values.result().value())});
       }
     }
   }
@@ -153,13 +151,21 @@ void HttpGrpcAccessLog::emitLog(const Http::RequestHeaderMap& request_headers,
     auto* logged_headers = response_properties->mutable_response_trailers();
 
     for (const auto& header : response_trailers_to_log_) {
-      const auto entry = response_trailers.get(header);
-      if (!entry.empty()) {
-        // TODO(https://github.com/envoyproxy/envoy/issues/13454): Potentially log all header
-        // values.
-        logged_headers->insert({header.get(), std::string(entry[0]->value().getStringView())});
+      const auto all_values =
+          Http::HeaderUtility::getAllOfHeaderAsString(response_trailers, header);
+      if (all_values.result().has_value()) {
+        logged_headers->insert({header.get(), std::string(all_values.result().value())});
       }
     }
+  }
+
+  if (const auto& bytes_meter = stream_info.getDownstreamBytesMeter(); bytes_meter != nullptr) {
+    request_properties->set_downstream_header_bytes_received(bytes_meter->headerBytesReceived());
+    response_properties->set_downstream_header_bytes_sent(bytes_meter->headerBytesSent());
+  }
+  if (const auto& bytes_meter = stream_info.getUpstreamBytesMeter(); bytes_meter != nullptr) {
+    request_properties->set_upstream_header_bytes_sent(bytes_meter->headerBytesSent());
+    response_properties->set_upstream_header_bytes_received(bytes_meter->headerBytesReceived());
   }
 
   tls_slot_->getTyped<ThreadLocalLogger>().logger_->log(std::move(log_entry));

@@ -12,6 +12,8 @@
 
 #include "absl/strings/match.h"
 #include "nghttp2/nghttp2.h"
+#include "quiche/common/structured_headers.h"
+#include "quiche/http2/adapter/header_validator.h"
 
 namespace Envoy {
 namespace Http {
@@ -36,7 +38,8 @@ using SharedResponseCodeDetails = ConstSingleton<SharedResponseCodeDetailsValues
 //   f.prefix_match: Match will succeed if header value matches the prefix value specified here.
 //   g.suffix_match: Match will succeed if header value matches the suffix value specified here.
 HeaderUtility::HeaderData::HeaderData(const envoy::config::route::v3::HeaderMatcher& config)
-    : name_(config.name()), invert_match_(config.invert_match()) {
+    : name_(config.name()), invert_match_(config.invert_match()),
+      treat_missing_as_empty_(config.treat_missing_header_as_empty()) {
   switch (config.header_match_specifier_case()) {
   case envoy::config::route::v3::HeaderMatcher::HeaderMatchSpecifierCase::kExactMatch:
     header_match_type_ = HeaderMatchType::Value;
@@ -137,7 +140,7 @@ HeaderUtility::getAllOfHeaderAsString(const HeaderMap& headers, const Http::Lowe
 bool HeaderUtility::matchHeaders(const HeaderMap& request_headers, const HeaderData& header_data) {
   const auto header_value = getAllOfHeaderAsString(request_headers, header_data.name_);
 
-  if (!header_value.result().has_value()) {
+  if (!header_value.result().has_value() && !header_data.treat_missing_as_empty_) {
     if (header_data.invert_match_) {
       return header_data.header_match_type_ == HeaderMatchType::Present && header_data.present_;
     } else {
@@ -145,7 +148,10 @@ bool HeaderUtility::matchHeaders(const HeaderMap& request_headers, const HeaderD
     }
   }
 
-  const auto value = header_value.result().value();
+  // If the header does not have value and the result is not returned in the
+  // code above, it means treat_missing_as_empty_ is set to true and we should
+  // treat the header value as empty.
+  const auto value = header_value.result().has_value() ? header_value.result().value() : "";
   bool match;
   switch (header_data.header_match_type_) {
   case HeaderMatchType::Value:
@@ -186,8 +192,8 @@ bool HeaderUtility::schemeIsValid(const absl::string_view scheme) {
 }
 
 bool HeaderUtility::headerValueIsValid(const absl::string_view header_value) {
-  return nghttp2_check_header_value(reinterpret_cast<const uint8_t*>(header_value.data()),
-                                    header_value.size()) != 0;
+  return http2::adapter::HeaderValidator::IsValidHeaderValue(header_value,
+                                                             http2::adapter::ObsTextOption::kAllow);
 }
 
 bool HeaderUtility::headerNameContainsUnderscore(const absl::string_view header_name) {
@@ -195,17 +201,18 @@ bool HeaderUtility::headerNameContainsUnderscore(const absl::string_view header_
 }
 
 bool HeaderUtility::authorityIsValid(const absl::string_view header_value) {
-  return nghttp2_check_authority(reinterpret_cast<const uint8_t*>(header_value.data()),
-                                 header_value.size()) != 0;
+  if (Runtime::runtimeFeatureEnabled(
+          "envoy.reloadable_features.http2_validate_authority_with_quiche")) {
+    return http2::adapter::HeaderValidator::IsValidAuthority(header_value);
+  } else {
+    return nghttp2_check_authority(reinterpret_cast<const uint8_t*>(header_value.data()),
+                                   header_value.size()) != 0;
+  }
 }
 
 bool HeaderUtility::isSpecial1xx(const ResponseHeaderMap& response_headers) {
-  if (Runtime::runtimeFeatureEnabled("envoy.reloadable_features.proxy_102_103") &&
-      (response_headers.Status()->value() == "102" ||
-       response_headers.Status()->value() == "103")) {
-    return true;
-  }
-  return response_headers.Status()->value() == "100";
+  return response_headers.Status()->value() == "100" ||
+         response_headers.Status()->value() == "102" || response_headers.Status()->value() == "103";
 }
 
 bool HeaderUtility::isConnect(const RequestHeaderMap& headers) {
@@ -218,6 +225,23 @@ bool HeaderUtility::isConnectResponse(const RequestHeaderMap* request_headers,
          static_cast<Http::Code>(Http::Utility::getResponseStatus(response_headers)) ==
              Http::Code::OK;
 }
+
+#ifdef ENVOY_ENABLE_HTTP_DATAGRAMS
+bool HeaderUtility::isCapsuleProtocol(const RequestOrResponseHeaderMap& headers) {
+  Http::HeaderMap::GetResult capsule_protocol =
+      headers.get(Envoy::Http::LowerCaseString("Capsule-Protocol"));
+  // When there are multiple Capsule-Protocol header entries, it returns false. RFC 9297 specifies
+  // that non-boolean value types must be ignored. If there are multiple header entries, the value
+  // type becomes a List so the header field must be ignored.
+  if (capsule_protocol.size() != 1) {
+    return false;
+  }
+  // Parses the header value and extracts the boolean value ignoring parameters.
+  absl::optional<quiche::structured_headers::ParameterizedItem> header_item =
+      quiche::structured_headers::ParseItem(capsule_protocol[0]->value().getStringView());
+  return header_item && header_item->item.is_boolean() && header_item->item.GetBoolean();
+}
+#endif
 
 bool HeaderUtility::requestShouldHaveNoBody(const RequestHeaderMap& headers) {
   return (headers.Method() &&
@@ -340,17 +364,15 @@ Http::Status HeaderUtility::checkRequiredRequestHeaders(const Http::RequestHeade
       return absl::InvalidArgumentError(
           absl::StrCat("missing required header: ", Envoy::Http::Headers::get().Host.get()));
     }
-    if (Runtime::runtimeFeatureEnabled("envoy.reloadable_features.validate_connect")) {
-      if (headers.Path() && !headers.Protocol()) {
-        // Path and Protocol header should only be present for CONNECT for upgrade style CONNECT.
-        return absl::InvalidArgumentError(
-            absl::StrCat("missing required header: ", Envoy::Http::Headers::get().Protocol.get()));
-      }
-      if (!headers.Path() && headers.Protocol()) {
-        // Path and Protocol header should only be present for CONNECT for upgrade style CONNECT.
-        return absl::InvalidArgumentError(
-            absl::StrCat("missing required header: ", Envoy::Http::Headers::get().Path.get()));
-      }
+    if (headers.Path() && !headers.Protocol()) {
+      // Path and Protocol header should only be present for CONNECT for upgrade style CONNECT.
+      return absl::InvalidArgumentError(
+          absl::StrCat("missing required header: ", Envoy::Http::Headers::get().Protocol.get()));
+    }
+    if (!headers.Path() && headers.Protocol()) {
+      // Path and Protocol header should only be present for CONNECT for upgrade style CONNECT.
+      return absl::InvalidArgumentError(
+          absl::StrCat("missing required header: ", Envoy::Http::Headers::get().Path.get()));
     }
   } else {
     if (!headers.Path()) {
@@ -363,7 +385,7 @@ Http::Status HeaderUtility::checkRequiredRequestHeaders(const Http::RequestHeade
 }
 
 Http::Status HeaderUtility::checkRequiredResponseHeaders(const Http::ResponseHeaderMap& headers) {
-  const absl::optional<uint64_t> status = Utility::getResponseStatusNoThrow(headers);
+  const absl::optional<uint64_t> status = Utility::getResponseStatusOrNullopt(headers);
   if (!status.has_value()) {
     return absl::InvalidArgumentError(
         absl::StrCat("missing required header: ", Envoy::Http::Headers::get().Status.get()));
@@ -385,8 +407,7 @@ HeaderUtility::HeaderValidationResult HeaderUtility::checkHeaderNameForUnderscor
     absl::string_view header_name,
     envoy::config::core::v3::HttpProtocolOptions::HeadersWithUnderscoresAction
         headers_with_underscores_action,
-    Stats::Counter& dropped_headers_with_underscores,
-    Stats::Counter& requests_rejected_with_underscores_in_headers) {
+    HeaderValidatorStats& stats) {
   if (headers_with_underscores_action == envoy::config::core::v3::HttpProtocolOptions::ALLOW ||
       !HeaderUtility::headerNameContainsUnderscore(header_name)) {
     return HeaderValidationResult::ACCEPT;
@@ -394,11 +415,11 @@ HeaderUtility::HeaderValidationResult HeaderUtility::checkHeaderNameForUnderscor
   if (headers_with_underscores_action ==
       envoy::config::core::v3::HttpProtocolOptions::DROP_HEADER) {
     ENVOY_LOG_MISC(debug, "Dropping header with invalid characters in its name: {}", header_name);
-    dropped_headers_with_underscores.inc();
+    stats.incDroppedHeadersWithUnderscores();
     return HeaderValidationResult::DROP;
   }
   ENVOY_LOG_MISC(debug, "Rejecting request due to header name with underscores: {}", header_name);
-  requests_rejected_with_underscores_in_headers.inc();
+  stats.incRequestsRejectedWithUnderscoresInHeaders();
   return HeaderUtility::HeaderValidationResult::REJECT;
 }
 
@@ -432,6 +453,57 @@ HeaderUtility::validateContentLength(absl::string_view header_value,
   }
   content_length_output = content_length.value();
   return HeaderValidationResult::ACCEPT;
+}
+
+std::vector<absl::string_view>
+HeaderUtility::parseCommaDelimitedHeader(absl::string_view header_value) {
+  std::vector<absl::string_view> values;
+  for (absl::string_view s : absl::StrSplit(header_value, ',')) {
+    absl::string_view token = absl::StripAsciiWhitespace(s);
+    if (token.empty()) {
+      continue;
+    }
+    values.emplace_back(token);
+  }
+  return values;
+}
+
+absl::string_view HeaderUtility::getSemicolonDelimitedAttribute(absl::string_view value) {
+  return absl::StripAsciiWhitespace(StringUtil::cropRight(value, ";"));
+}
+
+std::string HeaderUtility::addEncodingToAcceptEncoding(absl::string_view accept_encoding_header,
+                                                       absl::string_view encoding) {
+  // Append the content encoding only if it isn't already present in the
+  // accept_encoding header. If it is present with a q-value ("gzip;q=0.3"),
+  // remove the q-value to indicate that the content encoding setting that we
+  // add has max priority (i.e. q-value 1.0).
+  std::vector<absl::string_view> newContentEncodings;
+  std::vector<absl::string_view> contentEncodings =
+      Http::HeaderUtility::parseCommaDelimitedHeader(accept_encoding_header);
+  for (absl::string_view contentEncoding : contentEncodings) {
+    absl::string_view strippedEncoding =
+        Http::HeaderUtility::getSemicolonDelimitedAttribute(contentEncoding);
+    if (strippedEncoding != encoding) {
+      // Add back all content encodings back except for the content encoding that we want to
+      // add. For example, if content encoding is "gzip", this filters out encodings "gzip" and
+      // "gzip;q=0.6".
+      newContentEncodings.push_back(contentEncoding);
+    }
+  }
+  // Finally add a single instance of our content encoding.
+  newContentEncodings.push_back(encoding);
+  return absl::StrJoin(newContentEncodings, ",");
+}
+
+bool HeaderUtility::isStandardConnectRequest(const Http::RequestHeaderMap& headers) {
+  return headers.method() == Http::Headers::get().MethodValues.Connect &&
+         headers.getProtocolValue().empty();
+}
+
+bool HeaderUtility::isExtendedH2ConnectRequest(const Http::RequestHeaderMap& headers) {
+  return headers.method() == Http::Headers::get().MethodValues.Connect &&
+         !headers.getProtocolValue().empty();
 }
 
 } // namespace Http

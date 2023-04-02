@@ -854,7 +854,7 @@ TEST_F(OwnedImplTest, ReserveSingleOverCommit) {
       "length <= slice_.len_. Details: commit() length must be <= size of the Reservation");
 }
 
-// Test functionality of the `freelist` (a performance optimization)
+// Test functionality of the `freelist` (a performance optimization).
 TEST_F(OwnedImplTest, SliceFreeList) {
   Buffer::OwnedImpl b1, b2;
   std::vector<void*> slices;
@@ -1064,7 +1064,7 @@ TEST(OverflowDetectingUInt64, Arithmetic) {
   EXPECT_DEATH(length += 1, "overflow");
 }
 
-void TestBufferMove(uint64_t buffer1_length, uint64_t buffer2_length,
+void testBufferMove(uint64_t buffer1_length, uint64_t buffer2_length,
                     uint64_t expected_slice_count) {
   Buffer::OwnedImpl buffer1;
   buffer1.add(std::string(buffer1_length, 'a'));
@@ -1174,6 +1174,31 @@ TEST_F(OwnedImplTest, CopyOutToSlicesTests) {
     reservation.commit(data.size());
     EXPECT_EQ(data, dest_buf.toString());
   }
+  {
+    Buffer::OwnedImpl src_buffer;
+    // Create a slice with a small amount of data.
+    const uint32_t small_data_size = 10;
+    std::string small_data = std::string(small_data_size, 'a');
+    src_buffer.prepend(small_data);
+
+    // Add another slice with a large amount of data.
+    const uint32_t large_data_size = 16384;
+    std::string large_data = std::string(large_data_size, 'b');
+    BufferFragmentImpl frag(large_data.data(), large_data.size(), nullptr);
+    src_buffer.addBufferFragment(frag);
+    EXPECT_EQ(small_data_size + large_data_size, src_buffer.length());
+
+    // Copy-out from the buffer.
+    Buffer::OwnedImpl dest_buf;
+    auto reservation = dest_buf.reserveForRead();
+    EXPECT_EQ(small_data_size + large_data_size,
+              src_buffer.copyOutToSlices(small_data_size + large_data_size, reservation.slices(),
+                                         reservation.numSlices()));
+    reservation.commit(small_data_size + large_data_size);
+    EXPECT_EQ(absl::StrCat(small_data, large_data), dest_buf.toString());
+
+    src_buffer.drain(small_data_size + large_data_size);
+  }
 }
 
 // Slice size large enough to prevent slice content from being coalesced into an existing slice
@@ -1181,22 +1206,22 @@ constexpr uint64_t kLargeSliceSize = 2048;
 
 TEST_F(OwnedImplTest, MoveBuffersWithLargeSlices) {
   // Large slices should not be coalesced together
-  TestBufferMove(kLargeSliceSize, kLargeSliceSize, 2);
+  testBufferMove(kLargeSliceSize, kLargeSliceSize, 2);
 }
 
 TEST_F(OwnedImplTest, MoveBuffersWithSmallSlices) {
   // Small slices should be coalesced together
-  TestBufferMove(1, 1, 1);
+  testBufferMove(1, 1, 1);
 }
 
 TEST_F(OwnedImplTest, MoveSmallSliceIntoLargeSlice) {
   // Small slices should be coalesced with a large one
-  TestBufferMove(kLargeSliceSize, 1, 1);
+  testBufferMove(kLargeSliceSize, 1, 1);
 }
 
 TEST_F(OwnedImplTest, MoveLargeSliceIntoSmallSlice) {
   // Large slice should NOT be coalesced into the small one
-  TestBufferMove(1, kLargeSliceSize, 2);
+  testBufferMove(1, kLargeSliceSize, 2);
 }
 
 TEST_F(OwnedImplTest, MoveSmallSliceIntoNotEnoughFreeSpace) {
@@ -1204,7 +1229,7 @@ TEST_F(OwnedImplTest, MoveSmallSliceIntoNotEnoughFreeSpace) {
   // Slice buffer sizes are allocated in 4Kb increments
   // Make first slice have 127 of free space (it is actually less as there is small overhead of the
   // OwnedSlice object) And second slice 128 bytes
-  TestBufferMove(4096 - 127, 128, 2);
+  testBufferMove(4096 - 127, 128, 2);
 }
 
 TEST_F(OwnedImplTest, FrontSlice) {
@@ -1231,39 +1256,39 @@ TYPED_TEST(OwnedImplTypedTest, Write) {
   using IoSocketHandleType = typename TestFixture::IoSocketHandleTestType;
   IoSocketHandleType io_handle;
   buffer.add("example");
-  EXPECT_CALL(os_sys_calls, writev(_, _, _)).WillOnce(Return(Api::SysCallSizeResult{7, 0}));
+  EXPECT_CALL(os_sys_calls, send(_, _, _, _)).WillOnce(Return(Api::SysCallSizeResult{7, 0}));
   Api::IoCallUint64Result result = io_handle.write(buffer);
   EXPECT_TRUE(result.ok());
   EXPECT_EQ(7, result.return_value_);
   EXPECT_EQ(0, buffer.length());
 
   buffer.add("example");
-  EXPECT_CALL(os_sys_calls, writev(_, _, _)).WillOnce(Return(Api::SysCallSizeResult{6, 0}));
+  EXPECT_CALL(os_sys_calls, send(_, _, _, _)).WillOnce(Return(Api::SysCallSizeResult{6, 0}));
   result = io_handle.write(buffer);
   EXPECT_TRUE(result.ok());
   EXPECT_EQ(6, result.return_value_);
   EXPECT_EQ(1, buffer.length());
 
-  EXPECT_CALL(os_sys_calls, writev(_, _, _)).WillOnce(Return(Api::SysCallSizeResult{0, 0}));
+  EXPECT_CALL(os_sys_calls, send(_, _, _, _)).WillOnce(Return(Api::SysCallSizeResult{0, 0}));
   result = io_handle.write(buffer);
   EXPECT_TRUE(result.ok());
   EXPECT_EQ(0, result.return_value_);
   EXPECT_EQ(1, buffer.length());
 
-  EXPECT_CALL(os_sys_calls, writev(_, _, _)).WillOnce(Return(Api::SysCallSizeResult{-1, 0}));
+  EXPECT_CALL(os_sys_calls, send(_, _, _, _)).WillOnce(Return(Api::SysCallSizeResult{-1, 0}));
   result = io_handle.write(buffer);
   EXPECT_EQ(Api::IoError::IoErrorCode::UnknownError, result.err_->getErrorCode());
   EXPECT_EQ(0, result.return_value_);
   EXPECT_EQ(1, buffer.length());
 
-  EXPECT_CALL(os_sys_calls, writev(_, _, _))
+  EXPECT_CALL(os_sys_calls, send(_, _, _, _))
       .WillOnce(Return(Api::SysCallSizeResult{-1, SOCKET_ERROR_AGAIN}));
   result = io_handle.write(buffer);
   EXPECT_EQ(Api::IoError::IoErrorCode::Again, result.err_->getErrorCode());
   EXPECT_EQ(0, result.return_value_);
   EXPECT_EQ(1, buffer.length());
 
-  EXPECT_CALL(os_sys_calls, writev(_, _, _)).WillOnce(Return(Api::SysCallSizeResult{1, 0}));
+  EXPECT_CALL(os_sys_calls, send(_, _, _, _)).WillOnce(Return(Api::SysCallSizeResult{1, 0}));
   result = io_handle.write(buffer);
   EXPECT_TRUE(result.ok());
   EXPECT_EQ(1, result.return_value_);
@@ -1282,21 +1307,21 @@ TYPED_TEST(OwnedImplTypedTest, Read) {
   Buffer::OwnedImpl buffer;
   using IoSocketHandleType = typename TestFixture::IoSocketHandleTestType;
   IoSocketHandleType io_handle;
-  EXPECT_CALL(os_sys_calls, readv(_, _, _)).WillOnce(Return(Api::SysCallSizeResult{0, 0}));
+  EXPECT_CALL(os_sys_calls, recv(_, _, _, _)).WillOnce(Return(Api::SysCallSizeResult{0, 0}));
   Api::IoCallUint64Result result = io_handle.read(buffer, 100);
   EXPECT_TRUE(result.ok());
   EXPECT_EQ(0, result.return_value_);
   EXPECT_EQ(0, buffer.length());
   EXPECT_THAT(buffer.describeSlicesForTest(), testing::IsEmpty());
 
-  EXPECT_CALL(os_sys_calls, readv(_, _, _)).WillOnce(Return(Api::SysCallSizeResult{-1, 0}));
+  EXPECT_CALL(os_sys_calls, recv(_, _, _, _)).WillOnce(Return(Api::SysCallSizeResult{-1, 0}));
   result = io_handle.read(buffer, 100);
   EXPECT_EQ(Api::IoError::IoErrorCode::UnknownError, result.err_->getErrorCode());
   EXPECT_EQ(0, result.return_value_);
   EXPECT_EQ(0, buffer.length());
   EXPECT_THAT(buffer.describeSlicesForTest(), testing::IsEmpty());
 
-  EXPECT_CALL(os_sys_calls, readv(_, _, _))
+  EXPECT_CALL(os_sys_calls, recv(_, _, _, _))
       .WillOnce(Return(Api::SysCallSizeResult{-1, SOCKET_ERROR_AGAIN}));
   result = io_handle.read(buffer, 100);
   EXPECT_EQ(Api::IoError::IoErrorCode::Again, result.err_->getErrorCode());
@@ -1304,7 +1329,7 @@ TYPED_TEST(OwnedImplTypedTest, Read) {
   EXPECT_EQ(0, buffer.length());
   EXPECT_THAT(buffer.describeSlicesForTest(), testing::IsEmpty());
 
-  EXPECT_CALL(os_sys_calls, readv(_, _, _)).Times(0);
+  EXPECT_CALL(os_sys_calls, recv(_, _, _, _)).Times(0);
   result = io_handle.read(buffer, 0);
   EXPECT_EQ(0, result.return_value_);
   EXPECT_EQ(0, buffer.length());
@@ -1323,25 +1348,21 @@ TYPED_TEST(OwnedImplTypedTest, ReserveZeroCommit) {
   OwnedImplTest::expectSlices({{5, 0, 4096}, {0, 0, 0}}, buf);
   { auto reservation = buf.reserveSingleSlice(1280); }
   OwnedImplTest::expectSlices({{5, 0, 4096}}, buf);
-  os_fd_t pipe_fds[2] = {0, 0};
+  os_fd_t fds[2] = {0, 0};
   auto& os_sys_calls = Api::OsSysCallsSingleton::get();
-#ifdef WIN32
-  ASSERT_EQ(os_sys_calls.socketpair(AF_INET, SOCK_STREAM, 0, pipe_fds).return_value_, 0);
-#else
-  ASSERT_EQ(pipe(pipe_fds), 0);
-#endif
+  ASSERT_EQ(os_sys_calls.socketpair(ENVOY_DEFAULT_PIPE_TYPE, SOCK_STREAM, 0, fds).return_value_, 0);
   using IoSocketHandleType = typename TestFixture::IoSocketHandleTestType;
-  IoSocketHandleType io_handle(pipe_fds[0]);
-  ASSERT_EQ(os_sys_calls.setsocketblocking(pipe_fds[0], false).return_value_, 0);
-  ASSERT_EQ(os_sys_calls.setsocketblocking(pipe_fds[1], false).return_value_, 0);
+  IoSocketHandleType io_handle(fds[0]);
+  ASSERT_EQ(os_sys_calls.setsocketblocking(fds[0], false).return_value_, 0);
+  ASSERT_EQ(os_sys_calls.setsocketblocking(fds[1], false).return_value_, 0);
   const uint32_t max_length = 1953;
   std::string data(max_length, 'e');
-  const ssize_t rc = os_sys_calls.write(pipe_fds[1], data.data(), max_length).return_value_;
+  const ssize_t rc = os_sys_calls.write(fds[1], data.data(), max_length).return_value_;
   ASSERT_GT(rc, 0);
   const uint32_t previous_length = buf.length();
   Api::IoCallUint64Result result = io_handle.read(buf, max_length);
   ASSERT_EQ(result.return_value_, static_cast<uint64_t>(rc));
-  ASSERT_EQ(os_sys_calls.close(pipe_fds[1]).return_value_, 0);
+  ASSERT_EQ(os_sys_calls.close(fds[1]).return_value_, 0);
   ASSERT_EQ(previous_length, buf.search(data.data(), rc, previous_length, 0));
   EXPECT_EQ("bbbbb", buf.toString().substr(0, 5));
   OwnedImplTest::expectSlices({{5, 0, 4096}, {1953, 14431, 16384}}, buf);
@@ -1352,25 +1373,21 @@ TYPED_TEST(OwnedImplTypedTest, ReadReserveAndCommit) {
   Buffer::OwnedImpl buf;
   buf.add("bbbbb");
 
-  os_fd_t pipe_fds[2] = {0, 0};
+  os_fd_t fds[2] = {0, 0};
   auto& os_sys_calls = Api::OsSysCallsSingleton::get();
-#ifdef WIN32
-  ASSERT_EQ(os_sys_calls.socketpair(AF_INET, SOCK_STREAM, 0, pipe_fds).return_value_, 0);
-#else
-  ASSERT_EQ(pipe(pipe_fds), 0);
-#endif
+  ASSERT_EQ(os_sys_calls.socketpair(ENVOY_DEFAULT_PIPE_TYPE, SOCK_STREAM, 0, fds).return_value_, 0);
   using IoSocketHandleType = typename TestFixture::IoSocketHandleTestType;
-  IoSocketHandleType io_handle(pipe_fds[0]);
-  ASSERT_EQ(os_sys_calls.setsocketblocking(pipe_fds[0], false).return_value_, 0);
-  ASSERT_EQ(os_sys_calls.setsocketblocking(pipe_fds[1], false).return_value_, 0);
+  IoSocketHandleType io_handle(fds[0]);
+  ASSERT_EQ(os_sys_calls.setsocketblocking(fds[0], false).return_value_, 0);
+  ASSERT_EQ(os_sys_calls.setsocketblocking(fds[1], false).return_value_, 0);
 
   const uint32_t read_length = 32768;
   std::string data = "e";
-  const ssize_t rc = os_sys_calls.write(pipe_fds[1], data.data(), data.size()).return_value_;
+  const ssize_t rc = os_sys_calls.write(fds[1], data.data(), data.size()).return_value_;
   ASSERT_GT(rc, 0);
   Api::IoCallUint64Result result = io_handle.read(buf, read_length);
   ASSERT_EQ(result.return_value_, static_cast<uint64_t>(rc));
-  ASSERT_EQ(os_sys_calls.close(pipe_fds[1]).return_value_, 0);
+  ASSERT_EQ(os_sys_calls.close(fds[1]).return_value_, 0);
   EXPECT_EQ("bbbbbe", buf.toString());
   OwnedImplTest::expectSlices({{6, 4090, 4096}}, buf);
 }
